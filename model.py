@@ -193,3 +193,60 @@ class ProjectionLayer(nn.Module):
         x = torch.log_softmax(x, dim=-1)
         
         return x
+
+class Transformer(nn.Module):
+    
+    def __init__(self, encoder: Encoder, decoder: Decoder, src_embed: InputEmbedding, tgt_embed: InputEmbedding, src_position: PositionalEncoding, tgt_position: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_embed = src_embed
+        self.tgt_embed = tgt_embed
+        self.src_pos = src_position
+        self.tgt_pos = tgt_position
+        self.projection_layer = projection_layer
+        
+        
+    def encode(self, src, src_mask):
+        src = self.src_embed(src)
+        src = self.src_pos(src)
+        return self.encoder(src, src_mask)
+    
+    def decode(self, encoder_output, src_mask, tgt, tgt_mask):
+        tgt = self.tgt_embed(tgt)
+        tgt = self.tgt_pos(tgt)
+        return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
+    
+    def project(self, x):
+        return self.projection_layer(x)
+    
+
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, d_ff: int = 2048, dropout: float = 0.1) -> Transformer:
+    
+    # Create the encoder
+    src_embed = InputEmbedding(d_model, src_vocab_size)
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+    encoder_attention = MultiHeadAttention(d_model, h, dropout)
+    encoder_feed_forward = FeedForwardBlock(d_model, d_ff, dropout)
+    encoder = Encoder(nn.ModuleList([EncoderBlock(encoder_attention, encoder_feed_forward, dropout) for _ in range(N)]))
+    
+    # Create the decoder
+    tgt_embed = InputEmbedding(d_model, tgt_vocab_size)
+    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+    decoder_self_attention = MultiHeadAttention(d_model, h, dropout)
+    decoder_encoder_attention = MultiHeadAttention(d_model, h, dropout)
+    decoder_feed_forward = FeedForwardBlock(d_model, d_ff, dropout)
+    decoder = Decoder(nn.ModuleList([DecoderBlock(decoder_self_attention, decoder_encoder_attention, decoder_feed_forward, dropout) for _ in range(N)]))
+    
+    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+    
+    t = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+    
+    
+    # Initialize the parameters, this is important to ensure that the model works properly. 
+    # The model will not learn anything if the parameters are not initialized properly
+    for p in t.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p) # Xavier initialization for weights, what is the Xavier initialization? It is a method to initialize the weights of the neural network in a way that the variance of the input and output of each layer is the same
+    
+    return t
