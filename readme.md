@@ -1,7 +1,8 @@
 # Transformer from Scratch
 
 ## Project Overview
-![alt text](image.png)
+<!-- ![alt text](image-1.png) -->
+![alt text](image-1.png)
 This project implements a Transformer model from scratch for a machine translation task. The goal is to build a functional Transformer model starting from the basic principles and gradually developing it into a full-fledged model capable of translating text between languages.
 
 ## Project Structure
