@@ -11,7 +11,9 @@ class InputEmbedding(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
 
     def forward(self, x):
-        return self.embedding(x) * math.sqrt(self.d_model)
+        x = x.long()
+        x = self.embedding(x) * math.sqrt(self.d_model)
+        return x
     
 class PositionalEncoding(nn.Module):
 
@@ -36,7 +38,8 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + (self.pe[:, :x.shape[1], :].requires_grad_(False)) # self.pe[:, :x.shape[1], :] means that we are taking the positional encoding of the first x.shape[1] elements
+        # x = x + (self.pe[:, :x.shape[1], :].requires_grad_(False)) # self.pe[:, :x.shape[1], :] means that we are taking the positional encoding of the first x.shape[1] elements
+        x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False) # (batch, seq_len, d_model)
         return self.dropout(x)
     
 
@@ -49,6 +52,7 @@ class LayerNormalization(nn.Module):
         self.bias = nn.Parameter(torch.zeros(1))
     
     def forward(self, x):
+        x = x.float() 
         mean = x.mean(-1, keepdim=True)
         std = x.std(-1, keepdim=True)
         return self.alpha * (x - mean) / (std + self.eps) + self.bias
@@ -79,11 +83,11 @@ class MultiHeadAttention(nn.Module):
         assert d_model % h == 0, "d_model must be divisible by h"
         
         self.d_k:int = d_model // h
-        self.w_q = nn.Linear(d_model, d_model) # Wq
-        self.w_k = nn.Linear(d_model, d_model) # Wk
-        self.w_v = nn.Linear(d_model, d_model) # Wv
+        self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
+        self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
+        self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
         
-        self.w_o = nn.Linear(d_model, d_model)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
         self.dropout = nn.Dropout(dropout)
         
     @staticmethod
@@ -221,32 +225,75 @@ class Transformer(nn.Module):
         return self.projection_layer(x)
     
 
-def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, d_ff: int = 2048, dropout: float = 0.1) -> Transformer:
+# def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, d_ff: int = 2048, dropout: float = 0.1) -> Transformer:
     
-    # Create the encoder
+#     # Create the encoder
+#     src_embed = InputEmbedding(d_model, src_vocab_size)
+#     src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+#     encoder_attention = MultiHeadAttention(d_model, h, dropout)
+#     encoder_feed_forward = FeedForwardBlock(d_model, d_ff, dropout)
+#     encoder = Encoder(nn.ModuleList([EncoderBlock(encoder_attention, encoder_feed_forward, dropout) for _ in range(N)]))
+    
+#     # Create the decoder
+#     tgt_embed = InputEmbedding(d_model, tgt_vocab_size)
+#     tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+#     decoder_self_attention = MultiHeadAttention(d_model, h, dropout)
+#     decoder_encoder_attention = MultiHeadAttention(d_model, h, dropout)
+#     decoder_feed_forward = FeedForwardBlock(d_model, d_ff, dropout)
+#     decoder = Decoder(nn.ModuleList([DecoderBlock(decoder_self_attention, decoder_encoder_attention, decoder_feed_forward, dropout) for _ in range(N)]))
+    
+#     projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+    
+#     t = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+    
+    
+#     # Initialize the parameters, this is important to ensure that the model works properly. 
+#     # The model will not learn anything if the parameters are not initialized properly
+#     for p in t.parameters():
+#         if p.dim() > 1:
+#             nn.init.xavier_uniform_(p) # Xavier initialization for weights, what is the Xavier initialization? It is a method to initialize the weights of the neural network in a way that the variance of the input and output of each layer is the same
+    
+#     return t
+
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int=512, N: int=6, h: int=8, dropout: float=0.1, d_ff: int=2048) -> Transformer:
+    # Create the embedding layers
     src_embed = InputEmbedding(d_model, src_vocab_size)
-    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
-    encoder_attention = MultiHeadAttention(d_model, h, dropout)
-    encoder_feed_forward = FeedForwardBlock(d_model, d_ff, dropout)
-    encoder = Encoder(nn.ModuleList([EncoderBlock(encoder_attention, encoder_feed_forward, dropout) for _ in range(N)]))
-    
-    # Create the decoder
     tgt_embed = InputEmbedding(d_model, tgt_vocab_size)
+
+    # Create the positional encoding layers
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
     tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
-    decoder_self_attention = MultiHeadAttention(d_model, h, dropout)
-    decoder_encoder_attention = MultiHeadAttention(d_model, h, dropout)
-    decoder_feed_forward = FeedForwardBlock(d_model, d_ff, dropout)
-    decoder = Decoder(nn.ModuleList([DecoderBlock(decoder_self_attention, decoder_encoder_attention, decoder_feed_forward, dropout) for _ in range(N)]))
     
+    # Create the encoder blocks
+    encoder_blocks = []
+    for _ in range(N):
+        encoder_self_attention_block = MultiHeadAttention(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block, dropout)
+        encoder_blocks.append(encoder_block)
+
+    # Create the decoder blocks
+    decoder_blocks = []
+    for _ in range(N):
+        decoder_self_attention_block = MultiHeadAttention(d_model, h, dropout)
+        decoder_cross_attention_block = MultiHeadAttention(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        decoder_block = DecoderBlock(decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)
+        decoder_blocks.append(decoder_block)
+    
+    # Create the encoder and decoder
+    encoder = Encoder(nn.ModuleList(encoder_blocks))
+    decoder = Decoder(nn.ModuleList(decoder_blocks))
+    
+    # Create the projection layer
     projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
     
-    t = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+    # Create the transformer
+    transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
     
-    
-    # Initialize the parameters, this is important to ensure that the model works properly. 
-    # The model will not learn anything if the parameters are not initialized properly
-    for p in t.parameters():
+    # Initialize the parameters
+    for p in transformer.parameters():
         if p.dim() > 1:
-            nn.init.xavier_uniform_(p) # Xavier initialization for weights, what is the Xavier initialization? It is a method to initialize the weights of the neural network in a way that the variance of the input and output of each layer is the same
+            nn.init.xavier_uniform_(p)
     
-    return t
+    return transformer
